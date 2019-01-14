@@ -84,12 +84,22 @@ class BuildFile
   end
 
   def link(dst, objects, frameworks, libs, target)
+    if target.name == "FileBrowser"
+      puts "line 88 do link file browser"
+    else 
+      puts "line 90 do link #{target.name}"
+    end
     dst = builddir(dst)
-
+    puts "line 93 dst: #{dst}"
     static_libs  = libs.select { |lib| lib =~ /\blib(.*)\.a\z/ }
     dynamic_libs = libs.reject { |lib| lib =~ /\blib(.*)\.a\z/ }
 
-    @commands << "build #{dst}: link_executable #{escape(objects).join(' ')}"
+     
+    if target.name != "FileBrowser"
+      @commands << "build #{dst}: link_executable #{escape(objects).join(' ')}"
+    else
+      @commands << "build #{dst}: link_static #{escape(objects).join(' ')}"
+    end
     @commands << "  RAVE_FLAGS =#{frameworks.map { |item| " -framework #{item}" }.join}#{static_libs.map { |item| " #{item}" }.join}#{dynamic_libs.map { |item| " -l#{item}" }.join}"
     @commands << flags_for_target(target)
     dst
@@ -159,6 +169,21 @@ class BuildFile
     builddir(index)
   end
 
+
+  def create_lib_target(target, all_targets)
+    app_name = target.name
+    app_path = "#{builddir(File.dirname(target.path))}/#{app_name}"
+
+    if target.resources?
+      app_path = "#{app_path}.#{target.values['BUNDLE_EXTENSION'] || 'app'}"
+      resources = target.resources(self, all_targets).keys
+      @commands << "build #{app_path}: phony | #{resources.join(' ')}"
+    else
+      target.resources(self, all_targets)
+    end
+
+  end
+
   def create_target(target, all_targets)
     app_name = target.name
     app_path = "#{builddir(File.dirname(target.path))}/#{app_name}"
@@ -197,12 +222,12 @@ class BuildFile
     variables.each { |arr| io << format("%-#{width}s = %s\n", *arr) }
 
     if app_name = variables.find { |arr| arr.first == 'APP_NAME' }.last
-      io << "\n"
-      io << "build run:    phony #{app_name}/run\n"
-      io << "build tbz:    phony #{app_name}/tbz\n"
-      io << "build dsym:   phony #{app_name}/dsym\n"
-      io << "build deploy: phony #{app_name}/deploy\n"
-      io << "default run\n"
+      # io << "\n"
+      # io << "build run:    phony #{app_name}/run\n"
+      # io << "build tbz:    phony #{app_name}/tbz\n"
+      # io << "build dsym:   phony #{app_name}/dsym\n"
+      # io << "build deploy: phony #{app_name}/deploy\n"
+      # io << "default run\n"
     end
 
     args = @user_variables.map { |key, value| "-d'#{key}=#{value =~ /\$/ ? value.gsub(/\$/, '$$') :  "$#{key}"}'" }.join(' ')
@@ -338,7 +363,9 @@ class Target
   end
 
   def headers(builder)
+    
     @values['EXPORT'].each do |path|
+      puts "heads : #{path}"
       builder.header(path, self)
     end
   end
@@ -360,9 +387,10 @@ class Target
     frameworks = all_dependencies.map { |target| target.values['FRAMEWORKS'] }.flatten.sort.uniq
     libs       = all_dependencies.map { |target| target.values['LIBS'] }.flatten.sort.uniq
 
+    puts "line 383: Paths #{@path}"
     dst = File.dirname(@path)
     dst << "/#{@name}.#{@values['BUNDLE_EXTENSION'] || 'app'}/Contents/MacOS" if resources?
-
+    puts "line 386: dist #{dst}"
     @link = builder.link(File.join(dst, @name), objects, frameworks, libs, self)
   end
 
@@ -556,10 +584,15 @@ Dir.chdir(File.dirname(path)) do
 
   libraries = Set.new
   targets.values.each { |target| libraries.merge(target.values['LINK']) }
-  roots = targets.values.reject { |target| libraries.member?(target.name) || !target.values['EXPORT'].empty? }
+  roots = targets.values.reject { |target| (libraries.member?(target.name) && target.name != "FileBrowser") || (!target.values['EXPORT'].empty? && target.name != "FileBrowser") }
 
   roots.each do |target|
-    builder.create_target(target, targets)
+    if target.name == "FileBrowser"
+      builder.create_lib_target(target, targets)
+    else
+      puts "stop"
+      # builder.create_target(target, targets)
+    end
   end
 
   all_old_targets = ninja_targets(outfile, builddir)
@@ -589,7 +622,9 @@ Dir.chdir(File.dirname(path)) do
   end
 
   all_new_targets = ninja_targets(outfile, builddir)
-
+  all_new_targets.each do |target|
+    puts "line 623 #{target}"
+  end 
   if all_old_targets && all_new_targets
     targets_lost = all_old_targets - all_new_targets
     targets_lost.each do |path|
@@ -602,7 +637,6 @@ Dir.chdir(File.dirname(path)) do
 end
 
 # =======================
-
 __END__
 rule touch
   command = touch $out
